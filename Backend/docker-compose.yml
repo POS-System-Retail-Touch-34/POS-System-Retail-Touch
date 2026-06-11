@@ -1,0 +1,244 @@
+networks:
+    retailtouch-net:
+        driver: bridge
+
+services:
+    mysql:
+        image: mysql:${MYSQL_IMAGE_TAG:-8.0}
+        container_name: ${MYSQL_CONTAINER_NAME:-retailtouch-mysql}
+        ports:
+            - "${MYSQL_HOST_PORT:-3310}:3306"
+        environment:
+            MYSQL_ROOT_PASSWORD: ${AUTH_DB_PASSWORD:?Set AUTH_DB_PASSWORD in Backend/.env}
+            MYSQL_DATABASE: ${AUTH_DB_NAME:?Set AUTH_DB_NAME in Backend/.env}
+        volumes:
+            - mysql_data:/var/lib/mysql
+        networks:
+            - retailtouch-net
+        healthcheck:
+            test:
+                [
+                    "CMD",
+                    "mysqladmin",
+                    "ping",
+                    "-h",
+                    "localhost",
+                    "-u",
+                    "root",
+                    "-p${AUTH_DB_PASSWORD}",
+                ]
+            interval: 15s
+            timeout: 10s
+            retries: 5
+            start_period: 30s
+
+    mongodb:
+        image: mongo:${MONGODB_IMAGE_TAG:-6.0}
+        container_name: ${MONGODB_CONTAINER_NAME:-retailtouch-mongodb}
+        ports:
+            - "${MONGODB_HOST_PORT:-27017}:27017"
+        volumes:
+            - mongodb_data:/data/db
+        networks:
+            - retailtouch-net
+        healthcheck:
+            test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+            interval: 15s
+            timeout: 10s
+            retries: 5
+            start_period: 20s
+
+    rabbitmq:
+        image: rabbitmq:${RABBITMQ_IMAGE_TAG:-3-management}
+        container_name: ${RABBITMQ_CONTAINER_NAME:-retailtouch-rabbitmq}
+        ports:
+            - "${RABBITMQ_AMQP_PORT:-5672}:5672"
+            - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+        environment:
+            RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in Backend/.env}
+            RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in Backend/.env}
+        networks:
+            - retailtouch-net
+        healthcheck:
+            test: ["CMD", "rabbitmq-diagnostics", "ping"]
+            interval: 15s
+            timeout: 10s
+            retries: 5
+            start_period: 20s
+
+    gateway-service:
+        build:
+            context: .
+            dockerfile: gateway-service/Dockerfile
+        container_name: ${GATEWAY_CONTAINER_NAME:-retailtouch-gateway}
+        ports:
+            - "${GATEWAY_HOST_PORT:-8080}:8080"
+        environment:
+            JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in Backend/.env}
+            CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?Set CORS_ALLOWED_ORIGINS in Backend/.env}
+            AUTH_SERVICE_URL: ${DOCKER_AUTH_SERVICE_URL:-http://auth-service:8081}
+            INVENTORY_SERVICE_URL: ${DOCKER_INVENTORY_SERVICE_URL:-http://inventory-service:8082}
+            SALES_SERVICE_URL: ${DOCKER_SALES_SERVICE_URL:-http://sales-service:8083}
+            CUSTOMER_SERVICE_URL: ${DOCKER_CUSTOMER_SERVICE_URL:-http://customer-service:8084}
+            REPORTING_SERVICE_URL: ${DOCKER_REPORTING_SERVICE_URL:-http://reporting-service:8085}
+            NOTIFICATION_SERVICE_URL: ${DOCKER_NOTIFICATION_SERVICE_URL:-http://notification-service:8086}
+        networks:
+            - retailtouch-net
+        depends_on:
+            auth-service:
+                condition: service_started
+
+    auth-service:
+        build:
+            context: .
+            dockerfile: auth-service/Dockerfile
+        container_name: ${AUTH_CONTAINER_NAME:-retailtouch-auth}
+        environment:
+            AUTH_DB_HOST: ${DOCKER_AUTH_DB_HOST:-mysql}
+            AUTH_DB_PORT: ${AUTH_DB_PORT:-3306}
+            AUTH_DB_NAME: ${AUTH_DB_NAME:?Set AUTH_DB_NAME in Backend/.env}
+            AUTH_DB_USERNAME: ${AUTH_DB_USERNAME:-root}
+            AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?Set AUTH_DB_PASSWORD in Backend/.env}
+            JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in Backend/.env}
+            JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
+            JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-604800000}
+            AUTH_ALLOW_SELF_REGISTRATION: ${AUTH_ALLOW_SELF_REGISTRATION:-false}
+            AUTH_BOOTSTRAP_DEFAULT_USERS: ${AUTH_BOOTSTRAP_DEFAULT_USERS:-true}
+            AUTH_SETTINGS_ENCRYPTION_KEY: ${AUTH_SETTINGS_ENCRYPTION_KEY:?Set AUTH_SETTINGS_ENCRYPTION_KEY in Backend/.env}
+            AUTH_BOOTSTRAP_ADMIN_USERNAME: ${AUTH_BOOTSTRAP_ADMIN_USERNAME:-admin}
+            AUTH_BOOTSTRAP_ADMIN_EMAIL: ${AUTH_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
+            AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-}
+            AUTH_BOOTSTRAP_MANAGER_USERNAME: ${AUTH_BOOTSTRAP_MANAGER_USERNAME:-manager}
+            AUTH_BOOTSTRAP_MANAGER_EMAIL: ${AUTH_BOOTSTRAP_MANAGER_EMAIL:-manager@example.com}
+            AUTH_BOOTSTRAP_MANAGER_PASSWORD: ${AUTH_BOOTSTRAP_MANAGER_PASSWORD:-}
+            AUTH_BOOTSTRAP_CASHIER_USERNAME: ${AUTH_BOOTSTRAP_CASHIER_USERNAME:-cashier}
+            AUTH_BOOTSTRAP_CASHIER_EMAIL: ${AUTH_BOOTSTRAP_CASHIER_EMAIL:-cashier@example.com}
+            AUTH_BOOTSTRAP_CASHIER_PASSWORD: ${AUTH_BOOTSTRAP_CASHIER_PASSWORD:-}
+        networks:
+            - retailtouch-net
+        depends_on:
+            mysql:
+                condition: service_healthy
+
+    inventory-service:
+        build:
+            context: .
+            dockerfile: inventory-service/Dockerfile
+        container_name: ${INVENTORY_CONTAINER_NAME:-retailtouch-inventory}
+        environment:
+            INVENTORY_MONGODB_URI: ${DOCKER_INVENTORY_MONGODB_URI:-mongodb://mongodb:27017/retailtouch_inventory}
+            INVENTORY_MONGODB_DATABASE: ${INVENTORY_MONGODB_DATABASE:-retailtouch_inventory}
+            RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST:-rabbitmq}
+            RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in Backend/.env}
+            RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in Backend/.env}
+            AUTH_SERVICE_URL: ${DOCKER_AUTH_SERVICE_URL:-http://auth-service:8081}
+        networks:
+            - retailtouch-net
+        depends_on:
+            mongodb:
+                condition: service_healthy
+            rabbitmq:
+                condition: service_healthy
+
+    sales-service:
+        build:
+            context: .
+            dockerfile: sales-service/Dockerfile
+        container_name: ${SALES_CONTAINER_NAME:-retailtouch-sales}
+        environment:
+            SALES_MONGODB_URI: ${DOCKER_SALES_MONGODB_URI:-mongodb://mongodb:27017/retailtouch_sales}
+            SALES_MONGODB_DATABASE: ${SALES_MONGODB_DATABASE:-retailtouch_sales}
+            RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST:-rabbitmq}
+            RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in Backend/.env}
+            RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in Backend/.env}
+            INVENTORY_SERVICE_URL: ${DOCKER_INVENTORY_SERVICE_URL:-http://inventory-service:8082}
+            CUSTOMER_SERVICE_URL: ${DOCKER_CUSTOMER_SERVICE_URL:-http://customer-service:8084}
+            AUTH_SERVICE_URL: ${DOCKER_AUTH_SERVICE_URL:-http://auth-service:8081}
+            TAX_RATE: ${TAX_RATE:-0.18}
+            INVOICE_PREFIX: ${INVOICE_PREFIX:-INV}
+            LOYALTY_CONVERSION_RATE: ${LOYALTY_CONVERSION_RATE:-1}
+            RAZORPAY_KEY: ${RAZORPAY_KEY:-}
+            RAZORPAY_SECRET: ${RAZORPAY_SECRET:-}
+            RAZORPAY_ORDERS_URL: ${RAZORPAY_ORDERS_URL:-https://api.razorpay.com/v1/orders}
+        networks:
+            - retailtouch-net
+        depends_on:
+            mongodb:
+                condition: service_healthy
+            rabbitmq:
+                condition: service_healthy
+            inventory-service:
+                condition: service_started
+            customer-service:
+                condition: service_started
+
+    customer-service:
+        build:
+            context: .
+            dockerfile: customer-service/Dockerfile
+        container_name: ${CUSTOMER_CONTAINER_NAME:-retailtouch-customer}
+        environment:
+            CUSTOMER_MONGODB_URI: ${DOCKER_CUSTOMER_MONGODB_URI:-mongodb://mongodb:27017/retailtouch_customers}
+            CUSTOMER_MONGODB_DATABASE: ${CUSTOMER_MONGODB_DATABASE:-retailtouch_customers}
+            RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST:-rabbitmq}
+            RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in Backend/.env}
+            RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in Backend/.env}
+            AUTH_SERVICE_URL: ${DOCKER_AUTH_SERVICE_URL:-http://auth-service:8081}
+        networks:
+            - retailtouch-net
+        depends_on:
+            mongodb:
+                condition: service_healthy
+            rabbitmq:
+                condition: service_healthy
+
+    reporting-service:
+        build:
+            context: .
+            dockerfile: reporting-service/Dockerfile
+        container_name: ${REPORTING_CONTAINER_NAME:-retailtouch-reporting}
+        environment:
+            REPORTING_MONGODB_URI: ${DOCKER_REPORTING_MONGODB_URI:-mongodb://mongodb:27017/retailtouch_sales}
+            REPORTING_MONGODB_DATABASE: ${REPORTING_MONGODB_DATABASE:-retailtouch_sales}
+        networks:
+            - retailtouch-net
+        depends_on:
+            mongodb:
+                condition: service_healthy
+
+    notification-service:
+        build:
+            context: .
+            dockerfile: notification-service/Dockerfile
+        container_name: ${NOTIFICATION_CONTAINER_NAME:-retailtouch-notification}
+        environment:
+            RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST:-rabbitmq}
+            RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in Backend/.env}
+            RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in Backend/.env}
+            JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in Backend/.env}
+        networks:
+            - retailtouch-net
+        depends_on:
+            rabbitmq:
+                condition: service_healthy
+
+    frontend:
+        build:
+            context: ../Frontend
+            dockerfile: Dockerfile
+            args:
+                VITE_API_URL: ${VITE_API_URL:-http://gateway-service:8080}
+        container_name: ${FRONTEND_CONTAINER_NAME:-retailtouch-frontend}
+        ports:
+            - "${FRONTEND_HOST_PORT:-5173}:80"
+        environment:
+            VITE_API_URL: ${VITE_API_URL:-http://gateway-service:8080}
+        networks:
+            - retailtouch-net
+        depends_on:
+            gateway-service:
+                condition: service_started
+
+volumes:
+    mysql_data:
+    mongodb_data:
