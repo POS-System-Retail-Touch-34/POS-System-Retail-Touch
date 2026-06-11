@@ -1,0 +1,36 @@
+# --- Maven / Java ---
+target/
+*.jar
+*.war
+*.ear
+pom.xml.tag
+pom.xml.releaseBackup
+
+# Maven wrapper downloads
+.mvn/wrapper/maven-wrapper.jar
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Env / secrets ---
+.env
+application-local.properties
+application-dev.properties
+application-test.properties
+
+# --- IDE / Editors ---
+.idea/
+.vscode/
+*.iml
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Misc ---
+*.suo
+*.user
+*.swp
+*.tmp
+
